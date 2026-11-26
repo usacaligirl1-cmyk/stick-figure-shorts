@@ -3,7 +3,8 @@
 Automated 1080x1920 (9:16) 60fps minimalist vector storytelling studio powered by **Manim Community Edition**, **FFmpeg**, and **Claude Code**.
 
 ## Layout
-- `scenes/` — Manim scene scripts (one file per short).
+- `scenes/` — Manim scene scripts (one file per short): `wall_story.py`, `tug_of_war.py`.
+- `lib/rig.py` — shared rig for new scenes: posable stick figure, floor reflections, glows, titles.
 - `output/` — final rendered `.mp4` files, ready to download.
 - `temp/` — Manim's working files (ignored by git).
 - `CLAUDE.md` — render and visual style rules.
