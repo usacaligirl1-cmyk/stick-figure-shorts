@@ -343,16 +343,16 @@ def create_hud_text(body, name):
     obj.parent = cam
     # Camera looks down its local -Z; +Y is up in the frame.
     obj.location = (0.0, HUD_HALF_HEIGHT * 0.60, -HUD_DISTANCE)
-    # Scale the caption to fill 86% of the frame width.
+    # Scale the caption so its longest line fills 70% of the frame width.
     bpy.context.view_layer.update()
     width = obj.dimensions.x
-    scale = (HUD_HALF_WIDTH * 2 * 0.86) / width if width > 0 else 0.05
+    scale = (HUD_HALF_WIDTH * 2 * 0.70) / width if width > 0 else 0.05
     obj.scale = (scale, scale, scale)
     return obj
 
 
-txt1 = create_hud_text("It feels like I've gotten nowhere.", "CaptionStruggle")
-txt2 = create_hud_text("Look how far you've come.", "CaptionReveal")
+txt1 = create_hud_text("WHEN YOU ARE\nABOUT TO GIVE UP", "Caption1")
+txt2 = create_hud_text("THINK ABOUT HOW FAR\nYOU HAVE COME", "Caption2")
 
 # Switch caption at frame 205
 txt1.hide_render = False
