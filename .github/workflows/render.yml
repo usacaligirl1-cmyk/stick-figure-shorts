@@ -19,43 +19,77 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Full history so the pushed commits can be compared with what came before.
+          fetch-depth: 0
 
-      - name: Detect modified or requested scene script
+      - name: Detect modified or requested scene scripts
         id: detect
+        env:
+          REQUESTED: ${{ github.event.inputs.script_path }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          if [ -n "${{ github.event.inputs.script_path }}" ]; then
-            SCRIPT="${{ github.event.inputs.script_path }}"
+          if [ -n "$REQUESTED" ]; then
+            SCRIPTS="$REQUESTED"
           else
-            SCRIPT=$(git diff --name-only HEAD~1 HEAD -- 'scenes/*.py' | head -n 1)
+            # Compare against the commit the branch pointed at before this push.
+            # A brand-new branch has no "before" commit, so fall back to the parent commit.
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+               || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              BEFORE=$(git rev-parse HEAD~1 2>/dev/null || true)
+            fi
+            if [ -n "$BEFORE" ]; then
+              SCRIPTS=$(git diff --name-only --diff-filter=AMR "$BEFORE" HEAD -- 'scenes/*.py')
+            else
+              SCRIPTS=""
+            fi
           fi
-          if [ -z "$SCRIPT" ]; then
-            SCRIPT="scenes/wall_story.py"
+          if [ -z "$SCRIPTS" ]; then
+            SCRIPTS="scenes/wall_story.py"
           fi
-          echo "script=$SCRIPT" >> $GITHUB_OUTPUT
-          echo "Detected script: $SCRIPT"
+          echo "Detected scripts:"
+          echo "$SCRIPTS"
+          {
+            echo "scripts<<EOF_SCRIPTS"
+            echo "$SCRIPTS"
+            echo "EOF_SCRIPTS"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install FFmpeg, Manim, and Blender
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev texlive-latex-base blender
+          sudo apt-get install -y ffmpeg pkg-config libcairo2-dev libpango1.0-dev fonts-dejavu texlive-latex-base blender
           pip install manim
 
-      - name: Render Scene (Auto-detects Blender vs Manim)
+      - name: Render Scenes (Auto-detects Blender vs Manim)
+        env:
+          SCRIPTS: ${{ steps.detect.outputs.scripts }}
         run: |
+          set -euo pipefail
           mkdir -p output temp
-          SCRIPT="${{ steps.detect.outputs.script }}"
-          BASENAME=$(basename "$SCRIPT" .py)
+          while IFS= read -r SCRIPT; do
+            [ -n "$SCRIPT" ] || continue
+            if [ ! -f "$SCRIPT" ]; then
+              echo "::error::Script not found: $SCRIPT"
+              exit 1
+            fi
+            BASENAME=$(basename "$SCRIPT" .py)
 
-          if grep -q "import bpy" "$SCRIPT"; then
-            echo "Rendering 3D Blender scene: $SCRIPT"
-            blender -b -P "$SCRIPT" -- "output/${BASENAME}.mp4"
-          else
-            echo "Rendering 2D Manim scene: $SCRIPT"
-            SCENE_CLASS=$(grep -E "^class .*\(Scene\):" "$SCRIPT" | head -n 1 | sed -E 's/class ([^\(]+)\(.*/\1/')
-            manim -qh --resolution 1080,1920 --fps 60 --media_dir temp "$SCRIPT" "$SCENE_CLASS"
-            FOUND_MP4=$(find temp/videos -name "${SCENE_CLASS}.mp4" | head -n 1)
-            cp "$FOUND_MP4" "output/${BASENAME}.mp4"
-          fi
+            if grep -q "import bpy" "$SCRIPT"; then
+              echo "Rendering 3D Blender scene: $SCRIPT"
+              blender -b -P "$SCRIPT" -- "output/${BASENAME}.mp4"
+            else
+              SCENE_CLASS=$(grep -E "^class [A-Za-z_0-9]+\(.*Scene\):" "$SCRIPT" | head -n 1 | sed -E 's/class ([^\(]+)\(.*/\1/' || true)
+              if [ -z "$SCENE_CLASS" ]; then
+                echo "::error::No Scene class found in $SCRIPT"
+                exit 1
+              fi
+              echo "Rendering 2D Manim scene: $SCRIPT ($SCENE_CLASS)"
+              manim -qh --resolution 1080,1920 --fps 60 --media_dir temp "$SCRIPT" "$SCENE_CLASS"
+              FOUND_MP4=$(find "temp/videos/${BASENAME}" -name "${SCENE_CLASS}.mp4" | head -n 1)
+              cp "$FOUND_MP4" "output/${SCENE_CLASS}.mp4"
+            fi
+          done <<< "$SCRIPTS"
 
       - name: Upload Rendered 1080x1920 MP4
         uses: actions/upload-artifact@v4
