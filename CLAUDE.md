@@ -32,7 +32,7 @@ Reference implementation: `scenes/mountain_climb.py`. New 3D scenes must match i
 
 ### Character Rigging
 - Stick figure in the 2D style: thick rounded white limbs (`radius 0.05`), round head (`radius 0.17`) floating just above the neck, black outline (inverted-hull Solidify, thickness `0.022`), white emission `0.65`.
-- Every limb segment is a capsule (cylinder with hemispherical caps), so shoulders, elbows, hips and knees are spherical joints with no floating gaps. Fuse all segments with a Boolean union (`EXACT`, collection operand) before the outline modifier, so the outline traces the whole silhouette and no rings show at the joints.
+- Use `FusedFigure` from `lib/blender_rig.py` rather than rebuilding the rig. Every limb segment is a capsule (cylinder with hemispherical caps), so shoulders, elbows, hips and knees are spherical joints with no floating gaps. The segments are gathered into one object and fused with a voxel remesh before the outline modifier, so the outline traces the whole silhouette and no rings show at the joints. Do not fuse with a Boolean union: it drops the whole body on some poses.
 - Pose from joint positions, not hand-placed parts: compute joints with two-bone IK (`bend`), plant feet on the terrain height function, and bake one keyframe per frame.
 - Motion must be acted, not static: give the character an entrance and a settled end pose (e.g. limp up the last steps, turn, sit down cleanly). Seated pose: hips on the ground, knees bent, feet planted, hands resting on the knees, head dropping last.
 
@@ -49,3 +49,10 @@ Reference implementation: `scenes/mountain_climb.py`. New 3D scenes must match i
 ### Glowing Trail
 - A bevelled curve sampled densely on the terrain (lifted about `0.07`), golden emission `4.5`.
 - Tapered: full width at the character, thinning naturally toward the valley (per-point radius from `1.0` down to about `0.28`). It must end exactly where the character is.
+
+
+### Split-Screen Scenes
+- Build two `1080x960` panels and stack them with `render_split_screen` from `lib/side_view.py` (reference: `scenes/what_people_see.py`, `scenes/discipline.py`). It handles `SHORTS_CHUNK`, `SHORTS_STILL` and `SHORTS_CHECK` and needs `ffmpeg` on the PATH.
+- Side-view figures are posed with the pose dictionaries in `lib/side_view.py` (`stand`, `walk`, `mix`, `chain`), which feed `FusedFigure`.
+- Each panel gets its own caption in its own top safe zone, and the safe-zone rule applies per panel. Keep bright set dressing (windows, lamps) below the caption zone too.
+- Frame the figure large: it should fill roughly 40% of the panel height or more.

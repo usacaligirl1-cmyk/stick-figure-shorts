@@ -3,7 +3,8 @@
 Automated 1080x1920 (9:16) 60fps minimalist vector storytelling studio powered by **Manim Community Edition**, **FFmpeg**, and **Claude Code**.
 
 ## Layout
-- `scenes/` — scene scripts, one file per short. Manim (2D): `wall_story.py`, `tug_of_war.py`. Blender (3D): `mountain_climb.py`.
+- `scenes/` — scene scripts, one file per short. Manim (2D): `wall_story.py`, `tug_of_war.py`. Blender (3D): `mountain_climb.py`, and the split-screen `what_people_see.py` and `discipline.py`.
+- `lib/blender_rig.py`, `lib/side_view.py` — shared 3D helpers: fused stick figure, captions, side-view poses, split-screen rendering.
 - `lib/rig.py` — shared rig for new scenes: posable stick figure, floor reflections, glows, titles.
 - `output/` — final rendered `.mp4` files, ready to download.
 - `temp/` — Manim's working files (ignored by git).
