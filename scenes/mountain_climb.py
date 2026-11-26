@@ -43,12 +43,11 @@ scene.render.ffmpeg.constant_rate_factor = 'HIGH'
 scene.render.ffmpeg.ffmpeg_preset = 'GOOD'
 scene.render.filepath = output_path
 
-# Anti-aliasing samples per frame. Without a GPU (CI, cloud containers) Eevee runs
-# on software OpenGL, where the default 64 samples costs ~14s per frame; 8 keeps the
-# full 540-frame render to minutes. Override with SHORTS_SAMPLES for a final-quality pass.
-render_samples = int(os.environ.get("SHORTS_SAMPLES", "8"))
-if hasattr(scene.eevee, "taa_render_samples"):
-    scene.eevee.taa_render_samples = render_samples
+# Anti-aliasing samples per frame (Blender's default is 64). Without a GPU (CI, cloud
+# containers) Eevee runs on software OpenGL and render time grows with this number.
+scene.eevee.taa_render_samples = 16
+if os.environ.get("SHORTS_SAMPLES"):
+    scene.eevee.taa_render_samples = int(os.environ["SHORTS_SAMPLES"])
 
 # Soft glow around emissive elements (bloom exists in Eevee up to Blender 4.1)
 if hasattr(scene.eevee, "use_bloom"):

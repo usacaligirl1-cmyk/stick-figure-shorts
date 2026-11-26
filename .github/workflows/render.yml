@@ -1,4 +1,4 @@
-name: Auto Render Shorts (Manim + Blender)
+name: Auto Render Shorts (Fast)
 
 on:
   push:
@@ -14,86 +14,94 @@ on:
 jobs:
   render-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Manim scenes finish in ~2 minutes. Blender scenes render on the CPU here
+    # (no GPU on the runner) and need far longer than 15 minutes.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Full history so the pushed commits can be compared with what came before.
+          # Full history, so the pushed commits can be compared with what came before.
           fetch-depth: 0
 
-      - name: Detect modified or requested scene scripts
+      - name: Detect scene script and engine
         id: detect
         env:
           REQUESTED: ${{ github.event.inputs.script_path }}
           BEFORE: ${{ github.event.before }}
         run: |
           if [ -n "$REQUESTED" ]; then
-            SCRIPTS="$REQUESTED"
+            SCRIPT="$REQUESTED"
           else
             # Compare against the commit the branch pointed at before this push.
-            # A brand-new branch has no "before" commit, so fall back to the parent commit.
+            # A brand-new branch has no such commit, so fall back to the parent.
             if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
                || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
               BEFORE=$(git rev-parse HEAD~1 2>/dev/null || true)
             fi
+            SCRIPT=""
             if [ -n "$BEFORE" ]; then
-              SCRIPTS=$(git diff --name-only --diff-filter=AMR "$BEFORE" HEAD -- 'scenes/*.py')
-            else
-              SCRIPTS=""
+              SCRIPT=$(git diff --name-only --diff-filter=AMR "$BEFORE" HEAD -- 'scenes/*.py' | head -n 1)
             fi
           fi
-          if [ -z "$SCRIPTS" ]; then
-            SCRIPTS="scenes/wall_story.py"
+          [ -z "$SCRIPT" ] && SCRIPT="scenes/wall_story.py"
+          if [ ! -f "$SCRIPT" ]; then
+            echo "::error::Script not found: $SCRIPT"
+            exit 1
           fi
-          echo "Detected scripts:"
-          echo "$SCRIPTS"
-          {
-            echo "scripts<<EOF_SCRIPTS"
-            echo "$SCRIPTS"
-            echo "EOF_SCRIPTS"
-          } >> "$GITHUB_OUTPUT"
+          echo "Detected script: $SCRIPT"
+          echo "script=$SCRIPT" >> "$GITHUB_OUTPUT"
 
-      - name: Install FFmpeg, Manim, and Blender
+          if grep -q "import bpy" "$SCRIPT"; then
+            echo "engine=blender" >> "$GITHUB_OUTPUT"
+          else
+            echo "engine=manim" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Blender (only for 3D scripts)
+        if: steps.detect.outputs.engine == 'blender'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg pkg-config libcairo2-dev libpango1.0-dev fonts-dejavu texlive-latex-base blender xvfb libegl1 libgl1-mesa-dri
-          pip install manim
+          # xvfb + Mesa give Eevee the OpenGL display it needs on a GPU-less runner.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libegl1 libgl1-mesa-dri libxi6 libxxf86vm1 libxfixes3 libxrender1 libxkbcommon0 libsm6 fonts-dejavu
+          wget -q https://download.blender.org/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz
+          tar -xf blender-4.2.3-linux-x64.tar.xz
+          sudo mv blender-4.2.3-linux-x64 /opt/blender
+          sudo ln -s /opt/blender/blender /usr/local/bin/blender
+          blender --version | head -n 1
 
-      - name: Render Scenes (Auto-detects Blender vs Manim)
+      - name: Install Manim (only for 2D scripts, no LaTeX)
+        if: steps.detect.outputs.engine == 'manim'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg pkg-config libcairo2-dev libpango1.0-dev fonts-dejavu
+          pip install -q manim
+
+      - name: Render 1080x1920 Video
         env:
-          SCRIPTS: ${{ steps.detect.outputs.scripts }}
+          SCRIPT: ${{ steps.detect.outputs.script }}
+          ENGINE: ${{ steps.detect.outputs.engine }}
         run: |
           set -euo pipefail
           mkdir -p output temp
-          while IFS= read -r SCRIPT; do
-            [ -n "$SCRIPT" ] || continue
-            if [ ! -f "$SCRIPT" ]; then
-              echo "::error::Script not found: $SCRIPT"
+          BASENAME=$(basename "$SCRIPT" .py)
+
+          if [ "$ENGINE" == "blender" ]; then
+            xvfb-run -a blender -b -P "$SCRIPT" -- "output/${BASENAME}.mp4"
+          else
+            SCENE_CLASS=$(grep -E "^class [A-Za-z_0-9]+\(.*Scene\):" "$SCRIPT" | head -n 1 | sed -E 's/class ([^\(]+)\(.*/\1/' || true)
+            if [ -z "$SCENE_CLASS" ]; then
+              echo "::error::No Scene class found in $SCRIPT"
               exit 1
             fi
-            BASENAME=$(basename "$SCRIPT" .py)
+            manim -qh --resolution 1080,1920 --fps 60 --media_dir temp "$SCRIPT" "$SCENE_CLASS"
+            FOUND_MP4=$(find temp/videos -name "${SCENE_CLASS}.mp4" | head -n 1)
+            cp "$FOUND_MP4" "output/${BASENAME}.mp4"
+          fi
+          test -s "output/${BASENAME}.mp4"
 
-            if grep -q "import bpy" "$SCRIPT"; then
-              echo "Rendering 3D Blender scene: $SCRIPT"
-              # Eevee needs an OpenGL display; xvfb provides a virtual one on the runner.
-              xvfb-run -a blender -b -P "$SCRIPT" -- "output/${BASENAME}.mp4"
-              test -s "output/${BASENAME}.mp4"
-            else
-              SCENE_CLASS=$(grep -E "^class [A-Za-z_0-9]+\(.*Scene\):" "$SCRIPT" | head -n 1 | sed -E 's/class ([^\(]+)\(.*/\1/' || true)
-              if [ -z "$SCENE_CLASS" ]; then
-                echo "::error::No Scene class found in $SCRIPT"
-                exit 1
-              fi
-              echo "Rendering 2D Manim scene: $SCRIPT ($SCENE_CLASS)"
-              manim -qh --resolution 1080,1920 --fps 60 --media_dir temp "$SCRIPT" "$SCENE_CLASS"
-              FOUND_MP4=$(find "temp/videos/${BASENAME}" -name "${SCENE_CLASS}.mp4" | head -n 1)
-              cp "$FOUND_MP4" "output/${SCENE_CLASS}.mp4"
-            fi
-          done <<< "$SCRIPTS"
-
-      - name: Upload Rendered 1080x1920 MP4
+      - name: Upload Rendered MP4
         uses: actions/upload-artifact@v4
         with:
           name: rendered-short-${{ github.run_number }}
