@@ -33,6 +33,9 @@ scene.render.fps = 60
 scene.frame_start = 1
 scene.frame_end = 540  # 9 seconds at 60fps
 
+# Blender 5.0 split the output choice in two: media type first, then the format.
+if hasattr(scene.render.image_settings, "media_type"):
+    scene.render.image_settings.media_type = 'VIDEO'
 scene.render.image_settings.file_format = 'FFMPEG'
 scene.render.ffmpeg.format = 'MPEG4'
 scene.render.ffmpeg.codec = 'H264'
@@ -284,9 +287,23 @@ target.location = (0.0, -8.0, 1.5)
 target.keyframe_insert(data_path="location", frame=540)
 
 # Smooth Bezier interpolation for camera motion
+def action_fcurves(action):
+    """F-curves of an action, across Blender versions: legacy actions expose
+    `action.fcurves`; layered actions (the only kind from 5.0) keep them in channelbags."""
+    legacy = getattr(action, "fcurves", None)
+    if legacy is not None:
+        return list(legacy)
+    curves = []
+    for layer in getattr(action, "layers", []):
+        for strip in layer.strips:
+            for bag in getattr(strip, "channelbags", []):
+                curves.extend(bag.fcurves)
+    return curves
+
+
 for obj in (cam, target):
     if obj.animation_data and obj.animation_data.action:
-        for fcurve in obj.animation_data.action.fcurves:
+        for fcurve in action_fcurves(obj.animation_data.action):
             for kp in fcurve.keyframe_points:
                 kp.interpolation = 'BEZIER'
 
@@ -349,8 +366,10 @@ txt2.keyframe_insert(data_path="hide_render", frame=205)
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 if still_frame:
     scene.frame_set(int(still_frame))
+    if hasattr(scene.render.image_settings, "media_type"):
+        scene.render.image_settings.media_type = 'IMAGE'
     scene.render.image_settings.file_format = 'PNG'
     bpy.ops.render.render(write_still=True)
 else:
     bpy.ops.render.render(animation=True)
-print(f"Rendered: {output_path}")
+print(f"Rendered with Blender {bpy.app.version_string}: {output_path}")
