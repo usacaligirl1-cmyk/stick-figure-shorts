@@ -24,4 +24,6 @@ Blender's Eevee renderer needs a display, so wrap it in `xvfb-run` on headless m
 ```bash
 xvfb-run -a blender -b -P scenes/mountain_climb.py -- output/mountain_climb.mp4
 ```
+Without a GPU this is slow, so the GitHub workflow renders six slices of the frame range on parallel runners (`SHORTS_CHUNK=i/N`) and joins them with FFmpeg. It pins Blender 4.1.1.
+
 Preview one frame with `SHORTS_STILL=300` (write to a `.png`), or raise quality with `SHORTS_SAMPLES=64` (much slower without a GPU).

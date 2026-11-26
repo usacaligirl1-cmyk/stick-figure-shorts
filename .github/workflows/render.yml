@@ -11,13 +11,19 @@ on:
         required: true
         default: 'scenes/wall_story.py'
 
-jobs:
-  render-video:
-    runs-on: ubuntu-latest
-    # Manim scenes finish in ~2 minutes. Blender scenes render on the CPU here
-    # (no GPU on the runner) and need far longer than 15 minutes.
-    timeout-minutes: 60
+env:
+  # Blender scenes are split into this many slices, rendered on parallel runners.
+  BLENDER_CHUNKS: 6
 
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      script: ${{ steps.detect.outputs.script }}
+      engine: ${{ steps.detect.outputs.engine }}
+      chunks: ${{ steps.detect.outputs.chunks }}
+      chunk_count: ${{ steps.detect.outputs.chunk_count }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -59,8 +65,68 @@ jobs:
             echo "engine=manim" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install Blender (only for 3D scripts)
-        if: steps.detect.outputs.engine == 'blender'
+          # Only scripts that understand SHORTS_CHUNK can be split; others render in one piece.
+          if grep -q "SHORTS_CHUNK" "$SCRIPT"; then
+            COUNT="$BLENDER_CHUNKS"
+          else
+            COUNT=1
+          fi
+          echo "chunk_count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "chunks=[$(seq -s, 1 "$COUNT")]" >> "$GITHUB_OUTPUT"
+
+  render-manim:
+    needs: detect
+    if: needs.detect.outputs.engine == 'manim'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Manim (no LaTeX)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg pkg-config libcairo2-dev libpango1.0-dev fonts-dejavu
+          pip install -q manim
+
+      - name: Render 1080x1920 Video
+        env:
+          SCRIPT: ${{ needs.detect.outputs.script }}
+        run: |
+          set -euo pipefail
+          mkdir -p output temp
+          BASENAME=$(basename "$SCRIPT" .py)
+          SCENE_CLASS=$(grep -E "^class [A-Za-z_0-9]+\(.*Scene\):" "$SCRIPT" | head -n 1 | sed -E 's/class ([^\(]+)\(.*/\1/' || true)
+          if [ -z "$SCENE_CLASS" ]; then
+            echo "::error::No Scene class found in $SCRIPT"
+            exit 1
+          fi
+          manim -qh --resolution 1080,1920 --fps 60 --media_dir temp "$SCRIPT" "$SCENE_CLASS"
+          FOUND_MP4=$(find temp/videos -name "${SCENE_CLASS}.mp4" | head -n 1)
+          cp "$FOUND_MP4" "output/${BASENAME}.mp4"
+          test -s "output/${BASENAME}.mp4"
+
+      - name: Upload Rendered MP4
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-short-${{ github.run_number }}
+          path: output/*.mp4
+          retention-days: 14
+
+  render-blender:
+    needs: detect
+    if: needs.detect.outputs.engine == 'blender'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        chunk: ${{ fromJson(needs.detect.outputs.chunks) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Blender
         run: |
           # xvfb + Mesa give Eevee the OpenGL display it needs on a GPU-less runner.
           sudo apt-get update -qq
@@ -73,34 +139,59 @@ jobs:
           sudo ln -s /opt/blender/blender /usr/local/bin/blender
           blender --version | head -n 1
 
-      - name: Install Manim (only for 2D scripts, no LaTeX)
-        if: steps.detect.outputs.engine == 'manim'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg pkg-config libcairo2-dev libpango1.0-dev fonts-dejavu
-          pip install -q manim
-
-      - name: Render 1080x1920 Video
+      - name: Render slice ${{ matrix.chunk }} of ${{ needs.detect.outputs.chunk_count }}
         env:
-          SCRIPT: ${{ steps.detect.outputs.script }}
-          ENGINE: ${{ steps.detect.outputs.engine }}
+          SCRIPT: ${{ needs.detect.outputs.script }}
+          SHORTS_CHUNK: ${{ matrix.chunk }}/${{ needs.detect.outputs.chunk_count }}
+          CHUNK: ${{ matrix.chunk }}
         run: |
           set -euo pipefail
-          mkdir -p output temp
-          BASENAME=$(basename "$SCRIPT" .py)
+          mkdir -p parts
+          PART="parts/part_$(printf %02d "$CHUNK").mp4"
+          xvfb-run -a blender -b -P "$SCRIPT" -- "$PART"
+          test -s "$PART"
 
-          if [ "$ENGINE" == "blender" ]; then
-            xvfb-run -a blender -b -P "$SCRIPT" -- "output/${BASENAME}.mp4"
-          else
-            SCENE_CLASS=$(grep -E "^class [A-Za-z_0-9]+\(.*Scene\):" "$SCRIPT" | head -n 1 | sed -E 's/class ([^\(]+)\(.*/\1/' || true)
-            if [ -z "$SCENE_CLASS" ]; then
-              echo "::error::No Scene class found in $SCRIPT"
-              exit 1
-            fi
-            manim -qh --resolution 1080,1920 --fps 60 --media_dir temp "$SCRIPT" "$SCENE_CLASS"
-            FOUND_MP4=$(find temp/videos -name "${SCENE_CLASS}.mp4" | head -n 1)
-            cp "$FOUND_MP4" "output/${BASENAME}.mp4"
+      - name: Upload slice
+        uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ matrix.chunk }}
+          path: parts/*.mp4
+          retention-days: 1
+
+  stitch-blender:
+    needs: [detect, render-blender]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download slices
+        uses: actions/download-artifact@v4
+        with:
+          pattern: part-*
+          path: parts
+          merge-multiple: true
+
+      - name: Join slices into one video
+        env:
+          SCRIPT: ${{ needs.detect.outputs.script }}
+          EXPECTED: ${{ needs.detect.outputs.chunk_count }}
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
           fi
+          BASENAME=$(basename "$SCRIPT" .py)
+          mkdir -p output
+          ls -la parts
+          FOUND=$(ls parts/part_*.mp4 | wc -l)
+          if [ "$FOUND" -ne "$EXPECTED" ]; then
+            echo "::error::Expected $EXPECTED slices, found $FOUND"
+            exit 1
+          fi
+          # Zero-padded names sort in frame order; copy the streams without re-encoding.
+          for f in $(ls parts/part_*.mp4 | sort); do echo "file '$PWD/$f'"; done > list.txt
+          ffmpeg -v error -y -f concat -safe 0 -i list.txt -c copy "output/${BASENAME}.mp4"
+          ffprobe -v error -count_frames -show_entries stream=width,height,r_frame_rate,nb_read_frames,duration -of default=nw=1 "output/${BASENAME}.mp4"
           test -s "output/${BASENAME}.mp4"
 
       - name: Upload Rendered MP4

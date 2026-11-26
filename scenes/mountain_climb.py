@@ -1,6 +1,9 @@
 # Render command (Blender; Eevee needs a display, so wrap in xvfb-run on headless machines):
 # xvfb-run -a blender -b -P scenes/mountain_climb.py -- output/mountain_climb.mp4
 #
+# Render one slice for parallel rendering (the workflow does this, then joins the slices):
+# SHORTS_CHUNK=2/6 xvfb-run -a blender -b -P scenes/mountain_climb.py -- output/part_02.mp4
+#
 # Preview a single frame instead of the full video:
 # SHORTS_STILL=300 xvfb-run -a blender -b -P scenes/mountain_climb.py -- output/preview.png
 
@@ -362,6 +365,17 @@ txt2.hide_render = False
 txt2.keyframe_insert(data_path="hide_render", frame=205)
 
 # 9. Render
+# SHORTS_CHUNK="i/N" renders only the i-th of N equal slices of the frame range, so
+# the workflow can render slices on parallel runners and join them afterwards.
+chunk = os.environ.get("SHORTS_CHUNK")
+if chunk:
+    chunk_index, chunk_count = (int(v) for v in chunk.split("/"))
+    first_frame = scene.frame_start
+    total_frames = scene.frame_end - scene.frame_start + 1
+    scene.frame_start = first_frame + (total_frames * (chunk_index - 1)) // chunk_count
+    scene.frame_end = first_frame + (total_frames * chunk_index) // chunk_count - 1
+    print(f"Chunk {chunk_index}/{chunk_count}: frames {scene.frame_start}-{scene.frame_end}")
+
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 if still_frame:
     scene.frame_set(int(still_frame))
