@@ -1,0 +1,65 @@
+name: Auto Render Shorts (Manim + Blender)
+
+on:
+  push:
+    paths:
+      - 'scenes/**'
+  workflow_dispatch:
+    inputs:
+      script_path:
+        description: 'Path to script (e.g. scenes/wall_story.py)'
+        required: true
+        default: 'scenes/wall_story.py'
+
+jobs:
+  render-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect modified or requested scene script
+        id: detect
+        run: |
+          if [ -n "${{ github.event.inputs.script_path }}" ]; then
+            SCRIPT="${{ github.event.inputs.script_path }}"
+          else
+            SCRIPT=$(git diff --name-only HEAD~1 HEAD -- 'scenes/*.py' | head -n 1)
+          fi
+          if [ -z "$SCRIPT" ]; then
+            SCRIPT="scenes/wall_story.py"
+          fi
+          echo "script=$SCRIPT" >> $GITHUB_OUTPUT
+          echo "Detected script: $SCRIPT"
+
+      - name: Install FFmpeg, Manim, and Blender
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev texlive-latex-base blender
+          pip install manim
+
+      - name: Render Scene (Auto-detects Blender vs Manim)
+        run: |
+          mkdir -p output temp
+          SCRIPT="${{ steps.detect.outputs.script }}"
+          BASENAME=$(basename "$SCRIPT" .py)
+
+          if grep -q "import bpy" "$SCRIPT"; then
+            echo "Rendering 3D Blender scene: $SCRIPT"
+            blender -b -P "$SCRIPT" -- "output/${BASENAME}.mp4"
+          else
+            echo "Rendering 2D Manim scene: $SCRIPT"
+            SCENE_CLASS=$(grep -E "^class .*\(Scene\):" "$SCRIPT" | head -n 1 | sed -E 's/class ([^\(]+)\(.*/\1/')
+            manim -qh --resolution 1080,1920 --fps 60 --media_dir temp "$SCRIPT" "$SCENE_CLASS"
+            FOUND_MP4=$(find temp/videos -name "${SCENE_CLASS}.mp4" | head -n 1)
+            cp "$FOUND_MP4" "output/${BASENAME}.mp4"
+          fi
+
+      - name: Upload Rendered 1080x1920 MP4
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-short-${{ github.run_number }}
+          path: output/*.mp4
+          retention-days: 14
