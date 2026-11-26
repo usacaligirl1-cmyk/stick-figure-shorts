@@ -222,41 +222,90 @@ char_root = bpy.data.objects.new("StickCharacter", None)
 char_root.location = (char_x, char_y, char_z)
 scene.collection.objects.link(char_root)
 
-# Head
-bpy.ops.mesh.primitive_uv_sphere_add(radius=0.18, location=(0, 0, 1.18))
-head = bpy.context.active_object
-head.parent = char_root
-add_outlined_part(head)
+# The figure is built like the 2D shorts: thick rounded limbs that meet at real
+# joints (hip, knee, shoulder, elbow) and a round head floating just above the neck.
+LIMB_RADIUS = 0.05
+HEAD_RADIUS = 0.17
+THIGH, SHIN = 0.46, 0.44
+SPINE_LENGTH = 0.56
+SEAT_HEIGHT = 0.07  # hip height above the snow when seated
 
-# Torso
-bpy.ops.mesh.primitive_cylinder_add(radius=0.055, depth=0.58, location=(0, 0, 0.75))
-torso = bpy.context.active_object
-torso.parent = char_root
-add_outlined_part(torso)
 
-# Legs (seated/tired pose)
+def add_joint(parent, point, radius=LIMB_RADIUS):
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, segments=24, ring_count=12, location=point)
+    ball = bpy.context.active_object
+    for poly in ball.data.polygons:
+        poly.use_smooth = True
+    ball.parent = parent
+    add_outlined_part(ball)
+    return ball
+
+
+def add_limb(parent, points, radius=LIMB_RADIUS):
+    """Rounded limb through the given points (in the parent's space), with a ball at every joint."""
+    pts = [Vector(p) for p in points]
+    for start, end in zip(pts, pts[1:]):
+        axis = end - start
+        bpy.ops.mesh.primitive_cylinder_add(radius=radius, depth=axis.length, vertices=24, location=(start + end) / 2)
+        seg = bpy.context.active_object
+        seg.rotation_euler = axis.to_track_quat('Z', 'Y').to_euler()
+        for poly in seg.data.polygons:
+            poly.use_smooth = True
+        seg.parent = parent
+        add_outlined_part(seg)
+    for point in pts:
+        add_joint(parent, point, radius)
+
+
+def bend(root, tip, upper, lower, toward):
+    """Middle joint of a two-segment limb from root to tip, folded toward `toward`."""
+    root, tip, toward = Vector(root), Vector(tip), Vector(toward)
+    span = tip - root
+    reach = min(span.length, upper + lower - 1e-3)
+    direction = span.normalized()
+    along = (upper**2 - lower**2 + reach**2) / (2 * reach)
+    height = math.sqrt(max(upper**2 - along**2, 0.0))
+    side = (toward - toward.dot(direction) * direction).normalized()
+    return root + direction * along + side * height
+
+
+def ground(local_x, local_y):
+    """Snow height under a point given in the character's local space."""
+    return mountain_height(char_x + local_x, char_y + local_y) - char_z
+
+
+# Seated on the ridge facing the camera (local -Y), legs stretched down the slope.
+hip = Vector((0.0, 0.0, SEAT_HEIGHT))
 for side in (-1, 1):
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.048, depth=0.52, location=(side * 0.11, -0.18, 0.36))
-    leg = bpy.context.active_object
-    leg.rotation_euler = (math.radians(55), 0, 0)
-    leg.parent = char_root
-    add_outlined_part(leg)
+    leg_root = hip + Vector((side * 0.09, 0.0, 0.0))
+    foot = Vector((side * 0.19, -0.50, ground(side * 0.19, -0.50) + LIMB_RADIUS + 0.01))
+    knee = bend(leg_root, foot, THIGH, SHIN, toward=(side * 0.35, 0.0, 1.0))
+    add_limb(char_root, [leg_root, knee, foot])
 
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.045, depth=0.46, location=(side * 0.14, -0.12, 0.68))
-    arm = bpy.context.active_object
-    arm.rotation_euler = (math.radians(35), side * math.radians(-12), 0)
-    arm.parent = char_root
-    add_outlined_part(arm)
+# Upper body hangs off a pivot at the hips so the whole torso can slump forward.
+spine = bpy.data.objects.new("Spine", None)
+spine.parent = char_root
+spine.location = hip
+scene.collection.objects.link(spine)
 
-# Exhausted slump animation (frames 1 -> 180)
-char_root.location = (char_x, char_y, char_z + 0.18)
-char_root.keyframe_insert(data_path="location", frame=1)
-char_root.location = (char_x, char_y, char_z - 0.05)
-char_root.keyframe_insert(data_path="location", frame=160)
+neck = Vector((0.0, 0.0, SPINE_LENGTH))
+add_limb(spine, [(0.0, 0.0, 0.0), neck])
+for side in (-1, 1):
+    shoulder = neck + Vector((side * 0.085, 0.0, -0.03))
+    elbow = shoulder + Vector((side * 0.10, -0.17, -0.22))
+    hand = elbow + Vector((-side * 0.07, -0.19, -0.17))
+    add_limb(spine, [shoulder, elbow, hand], radius=LIMB_RADIUS * 0.9)
 
-head.location = (0, -0.08, 1.12)
+head = add_joint(spine, neck + Vector((0.0, -0.02, HEAD_RADIUS + 0.09)), HEAD_RADIUS)
+
+# Exhausted slump (frames 1 -> 160): the torso folds forward and the head drops.
+spine.rotation_euler = (math.radians(10), 0.0, 0.0)
+spine.keyframe_insert(data_path="rotation_euler", frame=1)
+spine.rotation_euler = (math.radians(30), 0.0, 0.0)
+spine.keyframe_insert(data_path="rotation_euler", frame=160)
+
 head.keyframe_insert(data_path="location", frame=1)
-head.location = (0, -0.14, 1.02)
+head.location = neck + Vector((0.0, -0.11, HEAD_RADIUS + 0.04))
 head.keyframe_insert(data_path="location", frame=160)
 
 # 8. Top Caption Text Objects Attached to Camera
