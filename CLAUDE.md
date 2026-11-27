@@ -2,6 +2,7 @@
 
 ## Render & Export Standards
 - Always render videos at `1080x1920` (9:16 vertical) and `60fps`: 2D scenes with Manim Community Edition, 3D scenes with Blender (see "3D Scene Standards" below).
+- Every short must run at least 30 seconds (`1800` frames at 60fps). Fill the time with more story beats and acting, never by slowing the motion down or holding a still.
 - Save all final rendered `.mp4` files into the `output/` folder so they are easy to access and download on mobile.
 - Always execute the Manim render command after creating or editing a scene to verify zero syntax or rendering errors.
 - Default render command:
@@ -20,7 +21,7 @@ Reference implementation: `scenes/mountain_climb.py`. New 3D scenes must match i
 ### Render
 - Engine: Eevee on Blender `4.1.1` (the GitHub workflow pins it; 4.2+ is far slower without a GPU and has no bloom). `1080x1920`, `60fps`, H.264 MP4.
 - `scene.eevee.taa_render_samples = 16`. Use the `Standard` view transform so emission `1.0` is exactly white.
-- The script takes its output path after `--` and must support `SHORTS_CHUNK=i/N` (render the i-th of N slices of the frame range; the workflow renders six in parallel and joins them), `SHORTS_STILL=<frame>` (one preview frame) and `SHORTS_SAMPLES`.
+- The script takes its output path after `--` and must support `SHORTS_CHUNK=i/N` (render the i-th of N slices of the frame range; the workflow renders twelve in parallel and joins them), `SHORTS_STILL=<frame>` (one preview frame) and `SHORTS_SAMPLES`.
 - Render command (Eevee needs a display, so use `xvfb-run` on headless machines):
   `xvfb-run -a blender -b -P scenes/<script>.py -- output/<script>.mp4`
 - Before a full render, preview stills from every act (`SHORTS_STILL`) and run the safe-zone check (`SHORTS_CHECK=1`).

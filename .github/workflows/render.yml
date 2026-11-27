@@ -13,7 +13,8 @@ on:
 
 env:
   # Blender scenes are split into this many slices, rendered on parallel runners.
-  BLENDER_CHUNKS: 6
+  # Twelve keeps a 30-second scene to roughly the time six took for a 10-second one.
+  BLENDER_CHUNKS: 12
 
 jobs:
   detect:
@@ -117,7 +118,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.engine == 'blender'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: true
       matrix:

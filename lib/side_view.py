@@ -17,7 +17,7 @@ from lib.blender_rig import (
     safe_zone_check, set_still_output, set_video_output, setup_render, show_between, smoothstep,
 )
 
-FIRST_FRAME, LAST_FRAME = 1, 600  # 10 seconds at 60fps
+FIRST_FRAME, LAST_FRAME = 1, 1800  # 30 seconds at 60fps (shorts run at least 30 seconds)
 PANEL_WIDTH, PANEL_HEIGHT = 1080, 960  # two panels stack into 1080x1920
 
 # ---------------------------------------------------------------------------- layout
@@ -202,80 +202,104 @@ def walk(x_from, x_to, u, steps, slump=0.0, lift=0.09, y_from=LANE_Y, y_to=LANE_
 
 
 # --------------------------------------------------------------------- choreography
-# Both figures do the same four things. The motivated one is brisk and upright; the
-# unmotivated one is slow, heavy and slouched, but still gets through all of it.
+# Both figures do the same four things over 30 seconds. The motivated one is brisk and
+# upright and gets far more done; the unmotivated one is slow, heavy and slouched, fails
+# a push-up and nods off at the desk, but still gets through all of it.
+
+def press(f, start, period, top, bottom):
+    """How deep a push-up is at frame f: 0 at the top, 1 at the bottom."""
+    return lerp(top, bottom, 0.5 - 0.5 * math.cos(2.0 * math.pi * (f - start) / period))
+
+
+def typing(f, speed):
+    return 0.03 * max(0.0, math.sin(f * speed)), 0.03 * max(0.0, math.sin(f * speed + 2.2))
+
 
 def motivated(frame):
     f = float(frame)
-    if f <= 36:   # springs out of bed
-        return chain(f, [(1, lie_in_bed()), (12, sit_up_in_bed()), (24, sit_on_bed_end()),
-                         (36, stand(BED_EXIT_X))])
-    if f <= 52:
-        return walk(BED_EXIT_X, PRE_PLANK_X, (f - 36) / 16, steps=2)
-    if f <= 62:   # hands down
-        return mix(stand(PRE_PLANK_X), crouch(PRE_PLANK_X), smoothstep(52, 62, f))
-    if f <= 72:   # kick back into a plank
-        t = smoothstep(62, 72, f)
+    if f <= 78:    # the alarm goes and it springs out of bed
+        return chain(f, [(1, lie_in_bed()), (40, lie_in_bed()), (52, sit_up_in_bed()),
+                         (64, sit_on_bed_end()), (78, stand(BED_EXIT_X))])
+    if f <= 100:
+        return walk(BED_EXIT_X, PRE_PLANK_X, (f - 78) / 22, steps=2)
+    if f <= 112:   # hands down
+        return mix(stand(PRE_PLANK_X), crouch(PRE_PLANK_X), smoothstep(100, 112, f))
+    if f <= 124:   # kick back into a plank
+        t = smoothstep(112, 124, f)
         return hop(mix(crouch(PRE_PLANK_X), plank(0.60), t), t, 0.10)
-    if f <= 212:  # four quick push-ups
-        down = 0.5 - 0.5 * math.cos(2.0 * math.pi * (f - 72) / 35.0)
-        return plank(lerp(0.60, 0.22, down))
-    if f <= 222:  # jump the feet back in
-        t = smoothstep(212, 222, f)
+    if f <= 684:   # sixteen quick push-ups
+        return plank(press(f, 124, 35.0, 0.60, 0.22))
+    if f <= 696:   # jump the feet back in
+        t = smoothstep(684, 696, f)
         return hop(mix(plank(0.60), crouch(MAT_EXIT_X), t), t, 0.10)
-    if f <= 234:
-        return mix(crouch(MAT_EXIT_X), stand(MAT_EXIT_X), smoothstep(222, 234, f))
-    if f <= 282:
-        return walk(MAT_EXIT_X, CHAIR_APPROACH_X, (f - 234) / 48, steps=4)
-    if f <= 298:
-        return mix(stand(CHAIR_APPROACH_X), seated(), smoothstep(282, 298, f))
-    if f <= 430:  # focused typing
-        return seated(tap_l=0.03 * max(0.0, math.sin(f * 0.9)), tap_r=0.03 * max(0.0, math.sin(f * 0.9 + 2.0)))
-    if f <= 444:
-        return mix(seated(), stand(CHAIR_APPROACH_X), smoothstep(430, 444, f))
-    if f <= 500:  # jogs to the shower
-        return walk(CHAIR_APPROACH_X, SHOWER_X, (f - 444) / 56, steps=5, lift=0.14, y_to=0.4)
-    arms_up = smoothstep(500, 512, f)
-    return mix(stand(SHOWER_X, y=0.4), showering(scrub=(f - 500) * 0.22), arms_up)
+    if f <= 710:
+        return mix(crouch(MAT_EXIT_X), stand(MAT_EXIT_X), smoothstep(696, 710, f))
+    if f <= 760:
+        return walk(MAT_EXIT_X, CHAIR_APPROACH_X, (f - 710) / 50, steps=4)
+    if f <= 778:
+        return mix(stand(CHAIR_APPROACH_X), seated(), smoothstep(760, 778, f))
+    if f <= 1380:  # a long stretch of focused typing, with one quick stretch
+        work = seated(*(0.0,) + typing(f, 0.9))
+        reach = seated()
+        reach.update(lean=-4.0, head=-10.0, hl=("rel", 0.10, 0.52), hr=("rel", -0.06, 0.52), eh=(1.0, 0.2))
+        stretch = smoothstep(1040, 1062, f) * (1.0 - smoothstep(1100, 1122, f))
+        return mix(work, reach, stretch) if stretch > 0 else work
+    if f <= 1396:
+        return mix(seated(), stand(CHAIR_APPROACH_X), smoothstep(1380, 1396, f))
+    if f <= 1456:  # jogs to the shower
+        return walk(CHAIR_APPROACH_X, SHOWER_X, (f - 1396) / 60, steps=5, lift=0.14, y_to=0.4)
+    arms_up = smoothstep(1456, 1470, f)
+    return mix(stand(SHOWER_X, y=0.4), showering(scrub=(f - 1456) * 0.22), arms_up)
 
 
 def unmotivated(frame):
     f = float(frame)
-    if f <= 128:  # drags itself out of bed
-        return chain(f, [(1, lie_in_bed()), (40, lie_in_bed()), (78, sit_up_in_bed(1.0)),
-                         (104, sit_on_bed_end(1.0)), (114, sit_on_bed_end(1.0, droop=1.0)),
-                         (128, stand(BED_EXIT_X, 1.0))])
-    if f <= 156:
-        return walk(BED_EXIT_X, PRE_PLANK_X, (f - 128) / 28, steps=3, slump=1.0, lift=0.04)
-    if f <= 172:
-        return mix(stand(PRE_PLANK_X, 1.0), crouch(PRE_PLANK_X), smoothstep(156, 172, f))
-    if f <= 186:
-        t = smoothstep(172, 186, f)
+    if f <= 440:   # lies there, then drags itself out of bed and sits with its head hanging
+        return chain(f, [(1, lie_in_bed()), (150, lie_in_bed()), (230, sit_up_in_bed(1.0)),
+                         (300, sit_on_bed_end(1.0)), (350, sit_on_bed_end(1.0, droop=1.0)),
+                         (400, sit_on_bed_end(1.0, droop=1.0)), (440, stand(BED_EXIT_X, 1.0))])
+    if f <= 500:
+        return walk(BED_EXIT_X, PRE_PLANK_X, (f - 440) / 60, steps=3, slump=1.0, lift=0.04)
+    if f <= 530:
+        return mix(stand(PRE_PLANK_X, 1.0), crouch(PRE_PLANK_X), smoothstep(500, 530, f))
+    if f <= 556:
+        t = smoothstep(530, 556, f)
         return hop(mix(crouch(PRE_PLANK_X), plank(0.58, sag=0.03), t), t, 0.04)
-    if f <= 306:  # two slow, heavy push-ups
-        down = 0.5 - 0.5 * math.cos(2.0 * math.pi * (f - 186) / 60.0)
-        return plank(lerp(0.58, 0.18, down), sag=0.03 + 0.03 * down)
-    if f <= 322:
-        t = smoothstep(306, 322, f)
+    if f <= 772:   # three slow, heavy push-ups
+        depth = press(f, 556, 72.0, 0.58, 0.18)
+        return plank(depth, sag=0.03 + 0.03 * (0.58 - depth) / 0.40)
+    if f <= 900:   # the fourth one fails: it collapses, lies there, then pushes back up
+        return chain(f, [(772, plank(0.58, sag=0.03)), (800, plank(0.125, sag=0.0)),
+                         (860, plank(0.125, sag=0.0)), (900, plank(0.58, sag=0.03))])
+    if f <= 1044:  # and does two more anyway
+        depth = press(f, 900, 72.0, 0.58, 0.18)
+        return plank(depth, sag=0.03 + 0.03 * (0.58 - depth) / 0.40)
+    if f <= 1070:
+        t = smoothstep(1044, 1070, f)
         return hop(mix(plank(0.58, sag=0.03), crouch(MAT_EXIT_X), t), t, 0.04)
-    if f <= 342:
-        return mix(crouch(MAT_EXIT_X), stand(MAT_EXIT_X, 1.0), smoothstep(322, 342, f))
-    if f <= 412:
-        return walk(MAT_EXIT_X, CHAIR_APPROACH_X, (f - 342) / 70, steps=4, slump=1.0, lift=0.04)
-    if f <= 432:
-        return mix(stand(CHAIR_APPROACH_X, 1.0), seated(1.0), smoothstep(412, 432, f))
-    if f <= 470:  # slouched, pecking at the keys
-        return seated(1.0, tap_l=0.03 * max(0.0, math.sin(f * 0.3)), tap_r=0.03 * max(0.0, math.sin(f * 0.3 + 2.4)))
-    if f <= 486:
-        return mix(seated(1.0), stand(CHAIR_APPROACH_X, 1.0), smoothstep(470, 486, f))
-    if f <= 588:  # trudges to the shower
-        return walk(CHAIR_APPROACH_X, SHOWER_X, (f - 486) / 102, steps=6, slump=1.0, lift=0.04, y_to=0.4)
+    if f <= 1100:
+        return mix(crouch(MAT_EXIT_X), stand(MAT_EXIT_X, 1.0), smoothstep(1070, 1100, f))
+    if f <= 1180:
+        return walk(MAT_EXIT_X, CHAIR_APPROACH_X, (f - 1100) / 80, steps=4, slump=1.0, lift=0.04)
+    if f <= 1210:
+        return mix(stand(CHAIR_APPROACH_X, 1.0), seated(1.0), smoothstep(1180, 1210, f))
+    if f <= 1500:  # slouched, pecking at the keys; nods off, jerks awake, keeps going
+        work = seated(*(1.0,) + typing(f, 0.3))
+        asleep = seated(1.0)
+        asleep.update(lean=47.0, head=58.0)
+        nod = smoothstep(1310, 1390, f) * (1.0 - smoothstep(1404, 1416, f))
+        return mix(work, asleep, nod) if nod > 0 else work
+    if f <= 1525:
+        return mix(seated(1.0), stand(CHAIR_APPROACH_X, 1.0), smoothstep(1500, 1525, f))
+    if f <= 1680:  # trudges to the shower
+        return walk(CHAIR_APPROACH_X, SHOWER_X, (f - 1525) / 155, steps=6, slump=1.0, lift=0.04, y_to=0.4)
     return showering(slump=1.0)
 
 
 ROUTINES = {"motivated": motivated, "unmotivated": unmotivated}
-SHOWER_ARRIVAL = {"motivated": 500, "unmotivated": 588}
-BLANKET_SLIDE = {"motivated": (3, 14), "unmotivated": (44, 80)}
+SHOWER_ARRIVAL = {"motivated": 1456, "unmotivated": 1680}
+BLANKET_SLIDE = {"motivated": (42, 54), "unmotivated": (160, 235)}
+DESK_EXIT = {"motivated": 1380, "unmotivated": 1500}  # the frame the figure gets up from the desk
 
 
 def joints_of(pose):

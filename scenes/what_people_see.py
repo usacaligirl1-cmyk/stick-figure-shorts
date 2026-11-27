@@ -43,7 +43,9 @@ MARK_X = PODIUM_X - 0.12        # where it stands on the podium
 PEDESTAL_X = PODIUM_X + 0.36
 TROPHY_REST_Z = PODIUM_HEIGHT + 1.22  # trophy base height while it waits on the pedestal
 
-WALK_END, STEP_END, GRAB, LIFT_END = 150, 190, 228, 268
+# For the first 17 seconds the stage is empty: the trophy waits under the lights while the
+# grind happens upstairs. Then the figure walks on, and the glory lasts a few seconds.
+WALK_START, WALK_END, STEP_END, GRAB, LIFT_END = 1020, 1250, 1300, 1348, 1396
 
 
 def on_podium(x, lean=3.0, head=4.0):
@@ -72,8 +74,11 @@ def holding_high(bounce=0.0):
 
 def champion(frame):
     f = float(frame)
+    if f <= WALK_START:  # waiting in the wings, out of sight
+        return stand(ENTRANCE_X, y=STAGE_Y)
     if f <= WALK_END:   # strolls in from the wings
-        return walk(ENTRANCE_X, STEP_X, (f - 1) / (WALK_END - 1), steps=7, y_from=STAGE_Y, y_to=STAGE_Y)
+        return walk(ENTRANCE_X, STEP_X, (f - WALK_START) / (WALK_END - WALK_START), steps=8,
+                    y_from=STAGE_Y, y_to=STAGE_Y)
     if f <= STEP_END:   # one foot up, then the other
         ground = stand(STEP_X, y=STAGE_Y)
         half_up = stand(STEP_X + 0.30, y=STAGE_Y)
@@ -85,6 +90,11 @@ def champion(frame):
     if f <= LIFT_END:
         return mix(reaching(), holding_high(), smoothstep(GRAB, LIFT_END, f))
     return holding_high(bounce=max(0.0, math.sin((f - LIFT_END) * 0.13)) ** 2)
+
+
+def sweep(frame, phase):
+    """Slow side-to-side swing of a searchlight, in radians."""
+    return math.radians(24.0) * math.sin(frame * 0.012 + phase)
 
 
 def trophy_base(frame):
@@ -169,12 +179,25 @@ def build_stage(captions):
     fill.data.energy = 60.0
     fill.data.color = (0.55, 0.65, 1.0)
     fill.rotation_euler = (math.radians(62), 0, 0)
-    for _ in range(9):
+    # Two coloured searchlights sweep the curtain while the stage waits
+    for x, colour, phase in ((-1.6, (0.45, 0.60, 1.0), 0.0), (2.6, (1.0, 0.55, 0.85), 2.1)):
+        bpy.ops.object.light_add(type="SPOT", location=(x, -2.2, 4.6))
+        beam = bpy.context.active_object
+        beam.data.energy = 900.0
+        beam.data.color = colour
+        beam.data.spot_size = math.radians(22)
+        beam.data.spot_blend = 0.6
+        for frame in range(FIRST_FRAME, LAST_FRAME + 1, 20):
+            beam.rotation_euler = (math.radians(52), 0, sweep(frame, phase))
+            beam.keyframe_insert(data_path="rotation_euler", frame=frame)
+
+    for i in range(16):
         bpy.ops.object.light_add(type="POINT", location=(rng.uniform(-1.4, 3.2), -2.9, rng.uniform(1.0, 1.5)))
         flash = bpy.context.active_object
         flash.data.color = (0.9, 0.95, 1.0)
         flash.data.energy = 0.0
-        at = rng.randint(LIFT_END, LAST_FRAME - 12)
+        # A few flashes as the figure walks on, most once the trophy is up
+        at = rng.randint(WALK_START + 60, GRAB) if i < 4 else rng.randint(LIFT_END, LAST_FRAME - 12)
         for frame, energy in ((at - 1, 0.0), (at + 1, 320.0), (at + 7, 0.0)):
             flash.data.energy = energy
             flash.data.keyframe_insert(data_path="energy", frame=frame)
@@ -192,9 +215,15 @@ def build_stage(captions):
         fan_head.parent = person
         shoulders = add_box((x, y, -0.06), (0.46, 0.24, 0.50), crowd_mat)
         shoulders.parent = person
+        # Gentle swaying while they wait...
+        sway = rng.uniform(0, 6.28)
+        for frame in range(FIRST_FRAME, LIFT_END - 20, 30):
+            person.location = (0.04 * math.sin(frame * 0.02 + sway), 0.0, height + 0.015 * math.sin(frame * 0.035 + sway))
+            person.keyframe_insert(data_path="location", frame=frame)
+        # ...then bouncing as they cheer
         phase = rng.uniform(0, 14)
         frame = LIFT_END - 20 + phase
-        person.location.z = height
+        person.location = (0.0, 0.0, height)
         person.keyframe_insert(data_path="location", frame=frame)
         while frame < LAST_FRAME:
             person.location.z = height + 0.10
@@ -206,7 +235,7 @@ def build_stage(captions):
     # Confetti: starts falling as the trophy goes up
     colours = [(1.0, 0.25, 0.3), (0.3, 0.7, 1.0), (1.0, 0.85, 0.2), (0.4, 1.0, 0.5), (1.0, 0.5, 0.9), (1.0, 1.0, 1.0)]
     confetti_mats = [make_material(f"Confetti{i}", c, roughness=0.6, emission=0.9) for i, c in enumerate(colours)]
-    for i in range(110):
+    for i in range(190):
         bpy.ops.mesh.primitive_plane_add(size=0.055)
         piece = bpy.context.active_object
         piece.data.materials.append(confetti_mats[i % len(confetti_mats)])

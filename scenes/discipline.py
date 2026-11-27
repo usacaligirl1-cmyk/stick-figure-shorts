@@ -18,11 +18,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib.side_view import build_morning_room, output_path_from_args, render_split_screen  # noqa: E402
+from lib.side_view import DESK_EXIT, build_morning_room, output_path_from_args, render_split_screen  # noqa: E402
 
-# Captions: (text, first frame, frame it disappears or None)
+# Captions: (text, first frame, frame it disappears or None). The bottom caption changes
+# as the unmotivated figure gets up from the desk and heads for the shower anyway.
+SWITCH = DESK_EXIT["unmotivated"]
 TOP_CAPTIONS = [("MOTIVATED", 1, None)]
-BOTTOM_CAPTIONS = [("UNMOTIVATED", 1, 470), ("DISCIPLINE IS\nDOING IT ANYWAY", 470, None)]
+BOTTOM_CAPTIONS = [("UNMOTIVATED", 1, SWITCH), ("DISCIPLINE IS\nDOING IT ANYWAY", SWITCH, None)]
 
 render_split_screen(
     "discipline",
