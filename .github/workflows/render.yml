@@ -60,14 +60,15 @@ jobs:
           echo "Detected script: $SCRIPT"
           echo "script=$SCRIPT" >> "$GITHUB_OUTPUT"
 
-          if grep -q "import bpy" "$SCRIPT"; then
+          # Blender scenes either import bpy themselves or build on the shared Blender helpers.
+          if grep -Eq "import bpy|lib\.blender_rig|lib\.side_view" "$SCRIPT"; then
             echo "engine=blender" >> "$GITHUB_OUTPUT"
           else
             echo "engine=manim" >> "$GITHUB_OUTPUT"
           fi
 
           # Only scripts that understand SHORTS_CHUNK can be split; others render in one piece.
-          if grep -q "SHORTS_CHUNK" "$SCRIPT"; then
+          if grep -Eq "SHORTS_CHUNK|lib\.side_view" "$SCRIPT"; then
             COUNT="$BLENDER_CHUNKS"
           else
             COUNT=1
